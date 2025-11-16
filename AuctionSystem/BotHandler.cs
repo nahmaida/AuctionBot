@@ -91,17 +91,22 @@ namespace AuctionSystem
                 return;
             }
 
-            switch (message.Text?.ToLower())
+            switch (message.Text)
             {
                 case "/start":
                     await HandleStart(message.Chat);
                     break;
 
-                case "/view":
+                case "Баланс":
+                    decimal balance = Users.Where(user => user.Id == chat.Id).First().Balance;
+                    await Client.SendMessage(message.Chat, $"💰<b>Баланс:</b> {balance}₽", parseMode: ParseMode.Html);
+                    break;
+
+                case "Просмотреть лоты":
                     await HandleView(message.Chat);
                     break;
 
-                case "/post":
+                case "Выставить на аукцион":
                     await HandlePost(message.Chat);
                     break;
 
@@ -115,7 +120,7 @@ namespace AuctionSystem
         {
             if (Users.Any(user => user.Id == chat.Id))
             {
-                await Client.SendMessage(chat, "Вы уже зарегестрированы!");
+                await Client.SendMessage(chat, "Вы уже зарегистрированы!");
                 return;
             }
 
@@ -130,7 +135,25 @@ namespace AuctionSystem
                 _rwl.ExitWriteLock();
             }
 
-            await Client.SendMessage(chat, "Добро пожаловать в Gambling empire!");
+            var replyKeyboard = new ReplyKeyboardMarkup(
+                new List<KeyboardButton[]>()
+                {
+                    new KeyboardButton[]
+                    {
+                        new KeyboardButton("Баланс"),
+                        new KeyboardButton("Выставить на аукцион")
+                    },
+                    new KeyboardButton[]
+                    {
+                        new KeyboardButton("Просмотреть лоты")
+                    }
+                }
+            )
+            {
+                ResizeKeyboard = true
+            };
+
+            await Client.SendMessage(chat, "<b>Добро пожаловать в Gambling Empire, аукцион номер 1 в П312</b>💹\n\n💰Стартовый баланс: 1000₽", replyMarkup: replyKeyboard, parseMode: ParseMode.Html);
         }
 
         private async Task HandleView(Chat chat)
@@ -231,6 +254,7 @@ namespace AuctionSystem
                                       $"👤 <b>Создатель:</b> (Вы)\n";
 
                     // Принять/отменить предпросмотр
+
                     var keyboard = new InlineKeyboardMarkup(new[]
                     {
                     new []
