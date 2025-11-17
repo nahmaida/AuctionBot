@@ -13,7 +13,8 @@
         public DateTime EndTime { get; set; }
         public bool IsActive { get; set; }
         public DateTime CreatedAt { get; set; }
-        public List<Transaction> BidHistory { get; set; }
+        public List<Transaction> BidHistory { get; set; } = new();
+        private readonly ReaderWriterLockSlim _rwl = new();
 
         public AuctionItem(string name, string description, string imageId, decimal initialPrice, UserAccount creator, TimeSpan duration)
         {
@@ -28,16 +29,43 @@
             IsActive = true;
             CreatedAt = DateTime.Now;
             EndTime = CreatedAt.Add(duration);
-            BidHistory = new List<Transaction>();
         }
 
         public string GetCaption()
         {
             return $"<b>Имя:</b> {Name}\n\n" +
                   $"Описание: {Description}\n\n" +
-                  $"💰 <b>Наибольшая ставка:</b> {HighestBidder.Username}: {CurrentPrice}\n" +
-                  $"👤 <b>Создатель:</b> {Creator.Username}\n" +
+                  $"💰 <b>Наибольшая ставка:</b> {HighestBidder.Username}: {CurrentPrice}₽\n" +
+                  $"👤 <b>Создатель:</b> @{Creator.Username}\n" +
                   $"⏰ <b>Заканичвается:</b> {EndTime:yyyy-MM-dd HH:mm}";
+        }
+
+        public bool TryPlaceBid(UserAccount bidder, decimal amount, out string error)
+        {
+            if (!IsActive)
+            {
+                error = "Аукцион по этому лоту уже завершён.";
+                return false;
+            }
+
+            if (amount <= CurrentPrice)
+            {
+                error = $"⚠️Минимальная новая ставка: <b>{CurrentPrice * 1,05}₽</b>";
+                return false;
+            }
+
+            _rwl.EnterWriteLock();
+            try
+            {
+                CurrentPrice = amount;
+                HighestBidder = bidder;
+                error = string.Empty;
+            }
+            finally
+            {
+                _rwl.ExitWriteLock();
+            }
+            return true;
         }
     }
 }

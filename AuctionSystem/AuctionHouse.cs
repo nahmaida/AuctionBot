@@ -7,8 +7,8 @@
 
         public AuctionHouse()
         {
-            AuctionItems = new List<AuctionItem>();
-            _rwl = new ReaderWriterLockSlim();
+            AuctionItems = new();
+            _rwl = new();
         }
 
         public void AddAuctionItem(AuctionItem item)

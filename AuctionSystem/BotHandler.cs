@@ -5,338 +5,538 @@ using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 
-namespace AuctionSystem
+namespace AuctionSystem;
+
+/// <summary>
+/// Этапы создания объявления + bid для ввода суммы ставки
+/// </summary>
+public enum PostStep
 {
-    public class PostFlow
+    name,
+    desc,
+    img,
+    price,
+    duration,
+    bid,
+    confirm,
+    none
+}
+
+/// <summary>
+/// Helper для временного хранения данных при создании поста
+/// </summary>
+public class PostFlow
+{
+    public string? Name { get; set; }
+    public string? Description { get; set; }
+    public string? ImageId { get; set; }
+    public decimal? Price { get; set; }
+    public double? Duration { get; set; }
+}
+
+/// <summary>
+/// Обработчик бота. Отвечает за прием сообщений, интерфейс бота и тд
+/// </summary>
+public class BotHandler
+{
+    // небезопасно, ну и ладно
+    private readonly string token = "8474493428:AAFczNluN_mNrzle4uOttUklYpgN1h39ybA";
+    private readonly ReaderWriterLockSlim _rwl = new();
+    // chatId -> PostFlow
+    private readonly Dictionary<long, PostFlow> _postFlows = new();
+    // chatId -> PostStep
+    private readonly Dictionary<long, PostStep> _postSteps = new();
+    // chatId -> auctionItemId
+    private readonly Dictionary<long, Guid> _pendingBids = new();
+    private readonly object _stateLock = new();
+    private TelegramBotClient Client { get; set; }
+    public List<UserAccount> Users { get; set; }
+    public AuctionHouse House { get; }
+
+    public BotHandler(AuctionHouse house)
     {
-        public string Step { get; set; } = "name"; // "name", "desc", "img", "price", "duration"
-        public string? Name { get; set; }
-        public string? Description { get; set; }
-        public string? ImageId { get; set; }
-        public decimal? Price { get; set; }
-        public double? Duration { get; set; }
+        Client = new TelegramBotClient(token);
+        Users = new List<UserAccount>();
+        House = house;
     }
 
-    public class BotHandler
+    public void Start()
     {
-        private readonly string token = "8474493428:AAFczNluN_mNrzle4uOttUklYpgN1h39ybA";
-        private readonly ReaderWriterLockSlim _rwl;
-        private readonly Dictionary<long, PostFlow> _postFlows;
-        private readonly object _postLock;
-        private TelegramBotClient Client { get; set; }
-        public List<UserAccount> Users { get; set; }
-        public AuctionHouse House { get; }
+        Client.StartReceiving(HandleUpdateAsync, HandleError);
+    }
 
-        public BotHandler(AuctionHouse house)
+    /// <summary>
+    /// Обработчик сообщений: направляет в OnMessage или OnCallback
+    /// </summary>
+    private async Task HandleUpdateAsync(ITelegramBotClient bot, Update update, CancellationToken cancellationToken)
+    {
+        // сообщение
+        if (update.Message is { } message)
         {
-            Client = new TelegramBotClient(token);
-            Users = new List<UserAccount>();
-            House = house;
-            _rwl = new ReaderWriterLockSlim();
-            _postFlows = new Dictionary<long, PostFlow>();
-            _postLock = new object();
+            await OnMessage(update);
+        }
+        // нажатие на кнопку
+        else if (update.CallbackQuery is { } callbackQuery)
+        {
+            await OnCallback(callbackQuery);
+        }
+    }
+
+    /// <summary>
+    /// Лог ошибок
+    /// </summary>
+    private Task HandleError(ITelegramBotClient bot, Exception exception, HandleErrorSource source, CancellationToken cancellationToken)
+    {
+        string errorText;
+        if (exception is ApiRequestException apiEx)
+        {
+            errorText = $"Telegram API Error [{apiEx.ErrorCode}] {apiEx.Message}";
+        }
+        else
+        {
+            errorText = $"Unhandled exception ({source}): {exception}";
         }
 
-        public void Start()
+        Console.WriteLine(errorText);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Обработка входящих сообщений
+    /// ВАЖНО: все состояние проверяется ТОЛЬКО для текущего чата
+    /// </summary>
+    private async Task OnMessage(Update update)
+    {
+        var message = update.Message;
+        if (message == null) return;
+
+        Chat chat = message.Chat;
+
+        // Получаем состояние чата
+        PostFlow? flow = null;
+        PostStep stepForChat = PostStep.none;
+        Guid bidItemId = Guid.Empty;
+        bool hasBid = false;
+
+        lock (_stateLock)
         {
-            Client.StartReceiving(HandleUpdateAsync, HandleError);
+            _postFlows.TryGetValue(chat.Id, out flow);
+            _postSteps.TryGetValue(chat.Id, out stepForChat);
+            hasBid = _pendingBids.TryGetValue(chat.Id, out bidItemId);
         }
 
-        private async Task HandleUpdateAsync(ITelegramBotClient bot, Update update, CancellationToken cancellationToken)
+        // Проверяем, создаем ли мы лот
+        if (stepForChat != PostStep.none && stepForChat != PostStep.bid && flow != null)
         {
-            if (update.Message is { } message)
-            {
-                await OnMessage(update);
-            }
-            else if (update.CallbackQuery is { } callbackQuery)
-            {
-                await OnCallback(callbackQuery);
-            }
+            await ContinuePostFlow(message, flow, stepForChat);
+            return;
         }
 
-        private Task HandleError(ITelegramBotClient bot, Exception exception, HandleErrorSource source, CancellationToken cancellationToken)
+        // Проверяем, делаем ли мы ставку
+        if (stepForChat == PostStep.bid && hasBid)
         {
-            string errorText;
-
-            if (exception is ApiRequestException apiEx)
-            {
-                errorText = $"Telegram API Error [{apiEx.ErrorCode}] {apiEx.Message}";
-            }
-            else
-            {
-                errorText = $"Unhandled exception ({source}): {exception}";
-            }
-
-            Console.WriteLine(errorText);
-
-            return Task.CompletedTask;
+            await HandleBidAmount(message, bidItemId);
+            return;
         }
 
-        private async Task OnMessage(Update update)
+        // читаем команды
+        switch (message.Text)
         {
-            var message = update.Message;
-            if (message == null) return;
+            case "/start":
+                await HandleStart(message.Chat);
+                break;
 
-            Chat chat = message.Chat;
-
-            PostFlow? flow;
-            lock (_postLock)
-            {
-                _postFlows.TryGetValue(chat.Id, out flow);
-            }
-
-            if (flow != null)
-            {
-                await ContinuePostFlow(message, flow);
-                return;
-            }
-
-            switch (message.Text)
-            {
-                case "/start":
-                    await HandleStart(message.Chat);
-                    break;
-
-                case "Баланс":
-                    decimal balance = Users.Where(user => user.Id == chat.Id).First().Balance;
-                    await Client.SendMessage(message.Chat, $"💰<b>Баланс:</b> {balance}₽", parseMode: ParseMode.Html);
-                    break;
-
-                case "Просмотреть лоты":
-                    await HandleView(message.Chat);
-                    break;
-
-                case "Выставить на аукцион":
-                    await HandlePost(message.Chat);
-                    break;
-
-                default:
-                    await Client.SendMessage(message.Chat, "Неверная команда!");
-                    break;
-            }
-        }
-
-        private async Task HandleStart(Chat chat)
-        {
-            if (Users.Any(user => user.Id == chat.Id))
-            {
-                await Client.SendMessage(chat, "Вы уже зарегистрированы!");
-                return;
-            }
-
-            UserAccount user = new UserAccount(chat.Id, chat.Username ?? "Аноним");
-            _rwl.EnterWriteLock();
-            try
-            {
-                Users.Add(user);
-            }
-            finally
-            {
-                _rwl.ExitWriteLock();
-            }
-
-            var replyKeyboard = new ReplyKeyboardMarkup(
-                new List<KeyboardButton[]>()
+            case "Баланс":
                 {
-                    new KeyboardButton[]
+                    UserAccount? user = Users.FirstOrDefault(user => user.Id == chat.Id);
+                    if (user == null)
                     {
-                        new KeyboardButton("Баланс"),
-                        new KeyboardButton("Выставить на аукцион")
-                    },
-                    new KeyboardButton[]
-                    {
-                        new KeyboardButton("Просмотреть лоты")
+                        await Client.SendMessage(message.Chat, "Сначала зарегистрируйтесь! (/start)", parseMode: ParseMode.Html);
+                        break;
                     }
-                }
-            )
-            {
-                ResizeKeyboard = true
-            };
 
-            await Client.SendMessage(chat, "<b>Добро пожаловать в Gambling Empire, аукцион номер 1 в П312</b>💹\n\n💰Стартовый баланс: 1000₽", replyMarkup: replyKeyboard, parseMode: ParseMode.Html);
+                    decimal balance = user.Balance;
+                    await Client.SendMessage(message.Chat, $"💰Баланс: {balance}₽", parseMode: ParseMode.Html);
+                }
+                break;
+
+            case "Просмотреть лоты":
+                await HandleView(message.Chat);
+                break;
+
+            case "Выставить на аукцион":
+                await HandlePost(message.Chat);
+                break;
+
+            default:
+                await Client.SendMessage(message.Chat, "Неверная команда!");
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Обработка ввода суммы ставки
+    /// </summary>
+    private async Task HandleBidAmount(Message message, Guid bidItemId)
+    {
+        Chat chat = message.Chat;
+
+        if (!decimal.TryParse(message.Text, out var bidAmount) || bidAmount <= 0)
+        {
+            await Client.SendMessage(message.Chat, "Неверный формат суммы, введите число.");
+            return;
         }
 
-        private async Task HandleView(Chat chat)
+        AuctionItem? item = House.AuctionItems.FirstOrDefault(item => item.Id == bidItemId);
+        if (item == null)
         {
-            if (House.AuctionItems.Count == 0)
+            await Client.SendMessage(message.Chat, "Неверный товар, повторите попытку.");
+            // Сбрасываем режим ставки только для этого чата
+            lock (_stateLock)
             {
-                await Client.SendMessage(chat, "Пока никаких обьявлений!");
-                return;
+                _pendingBids.Remove(chat.Id);
+                _postSteps[chat.Id] = PostStep.none;
             }
+            return;
+        }
 
-            foreach (AuctionItem item in House.AuctionItems)
+        UserAccount? user = Users.FirstOrDefault(user => user.Id == chat.Id);
+        if (user == null)
+        {
+            await Client.SendMessage(message.Chat, "Сначала зарегистрируйтесь! (/start)");
+            lock (_stateLock)
             {
-                if (!item.IsActive) continue;
+                _pendingBids.Remove(chat.Id);
+                _postSteps[chat.Id] = PostStep.none;
+            }
+            return;
+        }
 
-                var caption = item.GetCaption();
+        if (!item.TryPlaceBid(user, bidAmount, out string error))
+        {
+            await Client.SendMessage(message.Chat, $"{error}", parseMode: ParseMode.Html);
+            return;
+        }
 
-                // Отправляем фото с описанием
-                Message message = await Client.SendPhoto(
+        await Client.SendMessage(message.Chat, "🎉Успешно!");
+
+        // Сбрасываем состояние ставки для этого чата
+        lock (_stateLock)
+        {
+            _pendingBids.Remove(chat.Id);
+            _postSteps[chat.Id] = PostStep.none;
+        }
+    }
+
+    /// <summary>
+    /// Регистрация пользователя и вывод стартового меню
+    /// </summary>
+    private async Task HandleStart(Chat chat)
+    {
+        if (Users.Any(user => user.Id == chat.Id))
+        {
+            await Client.SendMessage(chat, "Вы уже зарегистрированы!");
+            return;
+        }
+
+        UserAccount user = new UserAccount(chat.Id, chat.Username ?? "Аноним");
+
+        _rwl.EnterWriteLock();
+        try
+        {
+            Users.Add(user);
+        }
+        finally
+        {
+            _rwl.ExitWriteLock();
+        }
+
+        // Приветствие с меню
+        var replyKeyboard = new ReplyKeyboardMarkup(
+            new[]
+            {
+                new KeyboardButton[]
+                {
+                    new KeyboardButton("Баланс"),
+                    new KeyboardButton("Выставить на аукцион")
+                },
+                new KeyboardButton[]
+                {
+                    new KeyboardButton("Просмотреть лоты")
+                }
+            }
+        )
+        {
+            ResizeKeyboard = true
+        };
+
+        await Client.SendMessage(
+            chat,
+            "Добро пожаловать в Gambling Empire, аукцион номер 1 в П312💹\n\n💰Стартовый баланс: 1000₽",
+            replyMarkup: replyKeyboard,
+            parseMode: ParseMode.Html
+        );
+    }
+
+    /// <summary>
+    /// Вывод активных лотов и кнопки для ставки
+    /// </summary>
+    private async Task HandleView(Chat chat)
+    {
+        if (House.AuctionItems.Count == 0)
+        {
+            await Client.SendMessage(chat, "Пока никаких объявлений!");
+            return;
+        }
+
+        foreach (AuctionItem item in House.AuctionItems)
+        {
+            if (!item.IsActive) continue;
+
+            var caption = item.GetCaption();
+            var keyboard = new InlineKeyboardMarkup(new[]
+            {
+                new []
+                {
+                    InlineKeyboardButton.WithCallbackData("✅ Сделать ставку", $"make_bid:{item.Id}")
+                }
+            });
+
+            await Client.SendPhoto(
+                chatId: chat.Id,
+                photo: InputFile.FromFileId(item.ImageId),
+                caption: caption,
+                parseMode: ParseMode.Html,
+                replyMarkup: keyboard
+            );
+        }
+    }
+
+    /// <summary>
+    /// Создания лота
+    /// Создаём PostFlow и переводим шаг в name только для данного chat.Id.
+    /// </summary>
+    private async Task HandlePost(Chat chat)
+    {
+        lock (_stateLock)
+        {
+            _postFlows[chat.Id] = new PostFlow();
+            _postSteps[chat.Id] = PostStep.name;
+        }
+
+        await Client.SendMessage(chat, "Введите название:", parseMode: ParseMode.Html);
+    }
+
+    /// <summary>
+    /// Продолжение создания лота по текущему шагу
+    /// </summary>
+    private async Task ContinuePostFlow(Message message, PostFlow flow, PostStep step)
+    {
+        Chat chat = message.Chat;
+
+        switch (step)
+        {
+            case PostStep.name:
+                if (message.Text == null)
+                {
+                    await Client.SendMessage(chat, "Неверное название, попробуйте ещё раз.");
+                    return;
+                }
+
+                flow.Name = message.Text;
+
+                lock (_stateLock)
+                {
+                    _postSteps[chat.Id] = PostStep.desc;
+                }
+
+                await Client.SendMessage(chat, "Введите описание:", parseMode: ParseMode.Html);
+                break;
+
+            case PostStep.desc:
+                if (message.Text == null)
+                {
+                    await Client.SendMessage(chat, "Неверное описание, попробуйте ещё раз.");
+                    return;
+                }
+
+                flow.Description = message.Text;
+
+                lock (_stateLock)
+                {
+                    _postSteps[chat.Id] = PostStep.img;
+                }
+
+                await Client.SendMessage(chat, "Отправьте фото:", parseMode: ParseMode.Html);
+                break;
+
+            case PostStep.img:
+                if (message.Photo == null)
+                {
+                    await Client.SendMessage(chat, "Отправьте фото:", parseMode: ParseMode.Html);
+                    return;
+                }
+
+                // Берем самое большое фото
+                flow.ImageId = message.Photo[^1].FileId;
+
+                lock (_stateLock)
+                {
+                    _postSteps[chat.Id] = PostStep.price;
+                }
+
+                await Client.SendMessage(chat, "Начальная цена (0-1.000.000):", parseMode: ParseMode.Html);
+                break;
+
+            case PostStep.price:
+                if (!decimal.TryParse(message.Text, out var price) || price < 0 || price > 1_000_000)
+                {
+                    await Client.SendMessage(chat, "Неверный формат цены, попробуйте ещё раз.");
+                    return;
+                }
+
+                flow.Price = price;
+
+                lock (_stateLock)
+                {
+                    _postSteps[chat.Id] = PostStep.duration;
+                }
+
+                await Client.SendMessage(chat, "Длительность в минутах (1-1440):", parseMode: ParseMode.Html);
+                break;
+
+            case PostStep.duration:
+                if (!double.TryParse(message.Text, out var duration) || duration < 1 || duration > 1440)
+                {
+                    await Client.SendMessage(chat, "Неверное время, попробуйте ещё раз.");
+                    return;
+                }
+
+                flow.Duration = duration;
+
+                string caption = $"Имя: {flow.Name}\n\n" +
+                                 $"Описание: {flow.Description}\n\n" +
+                                 $"💰 Наибольшая ставка: (Вы): {flow.Price}₽\n" +
+                                 $"👤 Создатель: (Вы)\n";
+
+                var keyboard = new InlineKeyboardMarkup(new[]
+                {
+                    new[]
+                    {
+                        InlineKeyboardButton.WithCallbackData("✅ Принять", "post_accept"),
+                        InlineKeyboardButton.WithCallbackData("🗑 Отменить", "post_discard")
+                    }
+                });
+
+                await Client.SendPhoto(
                     chatId: chat.Id,
-                    photo: InputFile.FromFileId(item.ImageId),
+                    photo: InputFile.FromFileId(flow.ImageId!),
                     caption: caption,
-                    parseMode: ParseMode.Html
-                );
-            }
-        }
-
-        private async Task HandlePost(Chat chat)
-        {
-            lock (_postLock)
-            {
-                _postFlows[chat.Id] = new PostFlow { Step = "name" };
-            }
-
-            await Client.SendMessage(chat, "<b>Введите название:</b>", parseMode: ParseMode.Html);
-        }
-
-        private async Task ContinuePostFlow(Message message, PostFlow flow)
-        {
-            Chat chat = message.Chat;
-            switch (flow.Step)
-            {
-                case "name":
-                    if (message.Text == null)
-                    {
-                        await Client.SendMessage(chat, "Неверное название, попробуйте ещё раз.");
-                        break;
-                    }
-                    flow.Name = message.Text;
-                    flow.Step = "desc";
-                    await Client.SendMessage(chat, "<b>Введите описание:</b>", parseMode: ParseMode.Html);
-                    break;
-
-                case "desc":
-                    if (message.Text == null)
-                    {
-                        await Client.SendMessage(chat, "Неверное описание, попробуйте ещё раз.");
-                        break;
-                    }
-                    flow.Description = message.Text;
-                    flow.Step = "img";
-                    await Client.SendMessage(chat, "<b>Отправьте фото:</b>", parseMode: ParseMode.Html);
-                    break;
-
-                case "img":
-                    if (message.Photo == null)
-                    {
-                        await Client.SendMessage(chat, "<b>Отправьте фото:</b>", parseMode: ParseMode.Html);
-                        return;
-                    }
-                    flow.ImageId = message.Photo[^1].FileId;
-                    flow.Step = "price";
-                    await Client.SendMessage(chat, "<b>Начальная цена (0-1.000.000):</b>", parseMode: ParseMode.Html);
-                    break;
-
-                case "price":
-                    if (!decimal.TryParse(message.Text, out var price) || price < 0 || price > 1000000)
-                    {
-                        await Client.SendMessage(chat, "Неверный формат цены, попробуйте ещё раз.");
-                        return;
-                    }
-
-                    flow.Price = price;
-                    flow.Step = "duration";
-                    await Client.SendMessage(chat, "<b>Длительность в минутах (1-1440):</b>", parseMode: ParseMode.Html);
-                    break;
-
-                case "duration":
-                    if (!double.TryParse(message.Text, out var duration) || duration < 1 || duration > 1440)
-                    {
-                        await Client.SendMessage(chat, "Неверное время, попробуйте ещё раз.");
-                        return;
-                    }
-                    flow.Duration = duration;
-
-                    string caption = $"<b>Имя:</b> {flow.Name}\n\n" +
-                                      $"Описание: {flow.Description}\n\n" +
-                                      $"💰 <b>Наибольшая ставка:</b> (Вы): {flow.Price}\n" +
-                                      $"👤 <b>Создатель:</b> (Вы)\n";
-
-                    // Принять/отменить предпросмотр
-
-                    var keyboard = new InlineKeyboardMarkup(new[]
-                    {
-                    new []
-                        {
-                            InlineKeyboardButton.WithCallbackData("✅ Принять", "post_accept"),
-                            InlineKeyboardButton.WithCallbackData("🗑 Отменить", "post_discard")
-                        }
-                    });
-
-                    // Отправляем предпросмотр
-                    await Client.SendPhoto(
-                        chatId: chat.Id,
-                        photo: InputFile.FromFileId(flow.ImageId!),
-                        caption: caption,
-                        parseMode: ParseMode.Html,
-                        replyMarkup: keyboard
-                    );
-
-                    flow.Step = "confirm";
-                    break;
-
-                case "confirm":
-                    // Пользователь должен нажать кнопку
-                    await Client.SendMessage(chat, "Нажмите кнопку 'Принять' или 'Отменить' под предпросмотром.");
-                    break;
-            }
-        }
-
-        private async Task OnCallback(CallbackQuery query)
-        {
-            var chatId = query.Message!.Chat.Id;
-            var data = query.Data;
-
-            if (data == "post_accept" || data == "post_discard")
-            {
-                PostFlow flow;
-                lock (_postLock)
-                {
-                    _postFlows.TryGetValue(chatId, out flow!);
-                }
-
-                if (flow == null)
-                {
-                    await Client.AnswerCallbackQuery(query.Id, "Нет активного лота для подтверждения.");
-                    return;
-                }
-
-                if (data == "post_discard")
-                {
-                    lock (_postLock)
-                    {
-                        _postFlows.Remove(chatId);
-                    }
-
-                    await Client.AnswerCallbackQuery(query.Id, "Лот отменён.");
-                    await Client.SendMessage(chatId, "Создание лота отменено.");
-                    return;
-                }
-
-                // Принимаем
-                var chat = query.Message.Chat;
-                var creator = new UserAccount(chat.Id, chat.Username ?? "Аноним");
-
-                AuctionItem item = new AuctionItem(
-                    name: flow.Name!,
-                    description: flow.Description!,
-                    imageId: flow.ImageId!,
-                    initialPrice: flow.Price!.Value,
-                    creator: creator,
-                    duration: TimeSpan.FromMinutes(flow.Duration ?? 1)
+                    parseMode: ParseMode.Html,
+                    replyMarkup: keyboard
                 );
 
-                House.AddAuctionItem(item);
+                lock (_stateLock)
+                {
+                    _postSteps[chat.Id] = PostStep.confirm;
+                }
 
-                lock (_postLock)
+                break;
+
+            case PostStep.confirm:
+                await Client.SendMessage(chat, "Нажмите кнопку 'Принять' или 'Отменить' под предпросмотром.");
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Обработка нажатий кнопок ТОЛЬКО для текущего chatId.
+    /// </summary>
+    private async Task OnCallback(CallbackQuery query)
+    {
+        var chatId = query.Message!.Chat.Id;
+        var data = query.Data;
+        if (data == null) return;
+
+        if (data == "post_accept" || data == "post_discard")
+        {
+            PostFlow? flow;
+            lock (_stateLock)
+            {
+                _postFlows.TryGetValue(chatId, out flow);
+            }
+
+            if (flow == null)
+            {
+                await Client.AnswerCallbackQuery(query.Id, "Нет активного лота для подтверждения.");
+                return;
+            }
+
+            if (data == "post_discard")
+            {
+                lock (_stateLock)
                 {
                     _postFlows.Remove(chatId);
+                    _postSteps[chatId] = PostStep.none;
                 }
 
-                await Client.AnswerCallbackQuery(query.Id, "Лот создан!");
-                await Client.SendMessage(chatId, "Лот успешно создан и добавлен в аукцион.");
+                await Client.AnswerCallbackQuery(query.Id, "Лот отменён.");
+                await Client.SendMessage(chatId, "Создание лота отменено.");
+                return;
             }
+
+            // Принять (создать лот)
+            var chat = query.Message.Chat;
+            var creator = new UserAccount(chat.Id, chat.Username ?? "Аноним");
+            var item = new AuctionItem(
+                name: flow.Name!,
+                description: flow.Description!,
+                imageId: flow.ImageId!,
+                initialPrice: flow.Price!.Value,
+                creator: creator,
+                duration: TimeSpan.FromMinutes(flow.Duration ?? 1)
+            );
+
+            House.AddAuctionItem(item);
+
+            lock (_stateLock)
+            {
+                _postFlows.Remove(chatId);
+                _postSteps[chatId] = PostStep.none;
+            }
+
+            await Client.AnswerCallbackQuery(query.Id, "Лот создан!");
+            await Client.SendMessage(chatId, "Лот успешно создан и добавлен в аукцион.");
+            return;
+        }
+
+        if (data.StartsWith("make_bid"))
+        {
+            // Берем id товара из команды
+            var parts = data.Split(':');
+            if (!(parts.Length == 2 && Guid.TryParse(parts[1], out Guid itemId)))
+            {
+                await Client.AnswerCallbackQuery(query.Id, "Неверные данные кнопки.");
+                return;
+            }
+
+            var item = House.AuctionItems.FirstOrDefault(x => x.Id == itemId);
+            if (item == null)
+            {
+                await Client.AnswerCallbackQuery(query.Id, "Лот не найден.");
+                return;
+            }
+
+            // Переводим в режим ввода суммы ставки
+            await Client.AnswerCallbackQuery(query.Id, "Вы выбрали лот для ставки.");
+
+            lock (_stateLock)
+            {
+                _pendingBids[chatId] = itemId;
+                _postSteps[chatId] = PostStep.bid;
+            }
+
+            await Client.SendMessage(chatId, $"Введите ставку (мин.: {item.CurrentPrice * 1.05m}₽)", parseMode: ParseMode.Html);
         }
     }
 }
