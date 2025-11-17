@@ -48,9 +48,15 @@
                 return false;
             }
 
-            if (amount <= CurrentPrice)
+            if (amount <= CurrentPrice * 1.05m)
             {
-                error = $"⚠️Минимальная новая ставка: <b>{CurrentPrice * 1,05}₽</b>";
+                error = $"⚠️Минимальная новая ставка: <b>{CurrentPrice * 1.05m}₽</b>";
+                return false;
+            }
+
+            if (amount < bidder.Balance)
+            {
+                error = $"⚠️У вас нет столько денег!</b>";
                 return false;
             }
 
