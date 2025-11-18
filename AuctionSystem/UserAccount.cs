@@ -10,6 +10,7 @@
         {
             Id = id;
             Username = username;
+            // Начальный баланс - 1000 рублей
             Balance = 1000m;
         }
     }

@@ -38,9 +38,9 @@
         {
             return $"<b>Имя:</b> {Name}\n\n" +
                   $"<b>Описание:</b> {Description}\n\n" +
-                  $"💰 <b>Наибольшая ставка:</b> @{HighestBidder.Username}: {CurrentPrice}₽\n" +
-                  $"👤 <b>Создатель:</b> @{Creator.Username}\n" +
-                  $"⏰ <b>Заканичвается:</b> {EndTime:yyyy-MM-dd HH:mm}";
+                  $"💰<b>Наибольшая ставка:</b> @{HighestBidder.Username}: {CurrentPrice}₽\n" +
+                  $"👤<b>Создатель:</b> @{Creator.Username}\n" +
+                  $"⏰<b>Заканичвается:</b> {EndTime:yyyy-MM-dd HH:mm}";
         }
 
         /// <summary>
@@ -79,6 +79,28 @@
             _rwl.EnterWriteLock();
             try
             {
+                if (HighestBidder != null && HighestBidder.Id != bidder.Id)
+                {
+                    // Возвращаем деньги предыдущему участнику
+                    Transaction refund = new Transaction(HighestBidder, CurrentPrice, DateTime.Now);
+                    if (!refund.TryProcess())
+                    {
+                        error = "⚠️Ошибка возврата средств предыдущему участнику!";
+                        return false;
+                    }
+                    BidHistory.Add(refund);
+                }
+
+                // Списываем деньги у пользователя
+                Transaction bid = new Transaction(bidder, -amount, DateTime.Now);
+                if (!bid.TryProcess())
+                {
+                    error = "⚠️Ошибка списания средств! Проверьте ваш баланс.";
+                    return false;
+                }
+                BidHistory.Add(bid);
+
+                // Обновляем данные
                 CurrentPrice = amount;
                 HighestBidder = bidder;
                 error = string.Empty;
@@ -99,6 +121,14 @@
             try
             {
                 IsActive = false;
+
+                Transaction payment = new Transaction(Creator, CurrentPrice, DateTime.Now);
+                if (!payment.TryProcess())
+                {
+                    throw new Exception("⚠️Ошибка перевода средств создателю лота!");
+                }
+
+                BidHistory.Add(payment);
             }
             finally
             {
