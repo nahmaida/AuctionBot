@@ -58,6 +58,7 @@ public class BotHandler
         Client = new TelegramBotClient(token);
         Users = new List<UserAccount>();
         House = house;
+        House.AuctionEnded += EndAuctionAsync;
     }
 
     public void Start()
@@ -105,6 +106,8 @@ public class BotHandler
     /// Обработка входящих сообщений
     /// ВАЖНО: все состояние проверяется ТОЛЬКО для текущего чата
     /// </summary>
+    /// <param name="update">Обновление от бота</param>
+    /// <returns></returns>
     private async Task OnMessage(Update update)
     {
         var message = update.Message;
@@ -177,6 +180,8 @@ public class BotHandler
     /// <summary>
     /// Обработка ввода суммы ставки
     /// </summary>
+    /// <param name="message">Сообщение с суммой</param>
+    /// <param name="bidItemId">Id лота для ставки</param>
     private async Task HandleBidAmount(Message message, Guid bidItemId)
     {
         Chat chat = message.Chat;
@@ -212,25 +217,28 @@ public class BotHandler
             return;
         }
 
-        if (!item.TryPlaceBid(user, bidAmount, out string error))
+        bool success = item.TryPlaceBid(user, bidAmount, out string error);
+
+        // Сбрасываем состояние ставки для этого чата  
+        lock (_stateLock)
+        {
+            _pendingBids.Remove(chat.Id);
+            _postSteps[chat.Id] = PostStep.none;
+        }
+
+        if (!success)
         {
             await Client.SendMessage(message.Chat, $"{error}", parseMode: ParseMode.Html);
             return;
         }
 
         await Client.SendMessage(message.Chat, "🎉Успешно!");
-
-        // Сбрасываем состояние ставки для этого чата
-        lock (_stateLock)
-        {
-            _pendingBids.Remove(chat.Id);
-            _postSteps[chat.Id] = PostStep.none;
-        }
     }
 
     /// <summary>
     /// Регистрация пользователя и вывод стартового меню
     /// </summary>
+    /// <param name="chat">Текущий чат</param>
     private async Task HandleStart(Chat chat)
     {
         if (Users.Any(user => user.Id == chat.Id))
@@ -280,10 +288,11 @@ public class BotHandler
 
     /// <summary>
     /// Вывод активных лотов и кнопки для ставки
+    /// <param name="chat">Текущий чат</param>
     /// </summary>
     private async Task HandleView(Chat chat)
     {
-        if (House.AuctionItems.Count == 0)
+        if (!House.AuctionItems.Any(a => a.IsActive))
         {
             await Client.SendMessage(chat, "Пока никаких объявлений!");
             return;
@@ -315,6 +324,7 @@ public class BotHandler
     /// <summary>
     /// Создания лота
     /// Создаём PostFlow и переводим шаг в name только для данного chat.Id.
+    /// <param name="chat">Текущий чат</param>
     /// </summary>
     private async Task HandlePost(Chat chat)
     {
@@ -330,6 +340,10 @@ public class BotHandler
     /// <summary>
     /// Продолжение создания лота по текущему шагу
     /// </summary>
+    /// <param name="message">Сообщение с данными</param>
+    /// <param name="flow">Хранилище данных</param>
+    /// <param name="step">Текущий шаг</param>
+    /// <returns></returns>
     private async Task ContinuePostFlow(Message message, PostFlow flow, PostStep step)
     {
         Chat chat = message.Chat;
@@ -452,6 +466,8 @@ public class BotHandler
     /// <summary>
     /// Обработка нажатий кнопок ТОЛЬКО для текущего chatId.
     /// </summary>
+    /// <param name="query">Запрос от пользователи (нажатая кнопка)</param>
+    /// <returns></returns>
     private async Task OnCallback(CallbackQuery query)
     {
         var chatId = query.Message!.Chat.Id;
@@ -537,6 +553,39 @@ public class BotHandler
             }
 
             await Client.SendMessage(chatId, $"Введите ставку (мин.: {item.CurrentPrice * 1.05m}₽)", parseMode: ParseMode.Html);
+        }
+    }
+
+    /// <summary>
+    /// Уведомляем победителя лота и обрабатываем перевод средств
+    /// </summary>
+    /// <param name="item">Завершенный лот</param>
+    public async Task EndAuctionAsync(AuctionItem item)
+    {
+        _rwl.EnterReadLock();
+        try
+        {
+            UserAccount winner = item.HighestBidder;
+            // Уведомляем создателя
+            await Client.SendMessage(
+                chatId: item.Creator.Id,
+                text: $"🎉Аукцион по вашему лоту <b>\"{item.Name}\"</b> завершен!\n\n<b>Итоговая цена:</b> {item.CurrentPrice}₽\n<b>Победитель:</b> @{winner.Username}",
+                parseMode: ParseMode.Html
+            );
+
+            // Уведомляем победителя, если он не создатель
+            if (winner != null && winner.Id != item.Creator.Id)
+            {
+                await Client.SendMessage(
+                    chatId: item.HighestBidder.Id,
+                    text: $"🎉Вы выиграли аукцион по лоту <b>\"{item.Name}\"</b> за <b>{item.CurrentPrice}₽</b>\nСвяжитесь с владельцем: <b>@{item.Creator.Username}</b>",
+                    parseMode: ParseMode.Html
+                );
+            }
+        }
+        finally
+        {
+            _rwl.ExitReadLock();
         }
     }
 }

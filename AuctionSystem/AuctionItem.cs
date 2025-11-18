@@ -31,20 +31,36 @@
             EndTime = CreatedAt.Add(duration);
         }
 
+        /// <summary>
+        /// Возвращает текст для обьявления о лоте
+        /// </summary>
         public string GetCaption()
         {
             return $"<b>Имя:</b> {Name}\n\n" +
-                  $"Описание: {Description}\n\n" +
-                  $"💰 <b>Наибольшая ставка:</b> {HighestBidder.Username}: {CurrentPrice}₽\n" +
+                  $"<b>Описание:</b> {Description}\n\n" +
+                  $"💰 <b>Наибольшая ставка:</b> @{HighestBidder.Username}: {CurrentPrice}₽\n" +
                   $"👤 <b>Создатель:</b> @{Creator.Username}\n" +
                   $"⏰ <b>Заканичвается:</b> {EndTime:yyyy-MM-dd HH:mm}";
         }
 
+        /// <summary>
+        /// Пытается обновить текщую ставку
+        /// </summary>
+        /// <param name="bidder">Пользователь, делающий ставку</param>
+        /// <param name="amount">Размер ставки</param>
+        /// <param name="error">out для возникающих ошибок</param>
+        /// <returns>True если успешно поставили, иначе false</returns>
         public bool TryPlaceBid(UserAccount bidder, decimal amount, out string error)
         {
             if (!IsActive)
             {
-                error = "Аукцион по этому лоту уже завершён.";
+                error = "⚠️Аукцион по этому лоту уже завершён.";
+                return false;
+            }
+
+            if (bidder.Id == Creator.Id)
+            {
+                error = "⚠️Вы не можете поставить на собственный лот!";
                 return false;
             }
 
@@ -72,6 +88,22 @@
                 _rwl.ExitWriteLock();
             }
             return true;
+        }
+
+        /// <summary>
+        /// Деактивирует лот
+        /// </summary>
+        public void EndAuction()
+        {
+            _rwl.EnterWriteLock();
+            try
+            {
+                IsActive = false;
+            }
+            finally
+            {
+                _rwl.ExitWriteLock();
+            }
         }
     }
 }
