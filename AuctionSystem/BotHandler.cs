@@ -228,7 +228,7 @@ public class BotHandler
 
         if (!success)
         {
-            await Client.SendMessage(message.Chat, $"{error}", parseMode: ParseMode.Html);
+            await Client.SendMessage(message.Chat, error);
             return;
         }
 
@@ -307,7 +307,7 @@ public class BotHandler
             {
                 new []
                 {
-                    InlineKeyboardButton.WithCallbackData("✅ Сделать ставку", $"make_bid:{item.Id}")
+                    InlineKeyboardButton.WithCallbackData("✅Сделать ставку", $"make_bid:{item.Id}")
                 }
             });
 
@@ -347,6 +347,7 @@ public class BotHandler
     private async Task ContinuePostFlow(Message message, PostFlow flow, PostStep step)
     {
         Chat chat = message.Chat;
+        decimal userBalance = Users.First(u => u.Id == chat.Id).Balance;
 
         switch (step)
         {
@@ -399,13 +400,13 @@ public class BotHandler
                     _postSteps[chat.Id] = PostStep.price;
                 }
 
-                await Client.SendMessage(chat, "Начальная цена (0-1.000.000):", parseMode: ParseMode.Html);
+                await Client.SendMessage(chat, $"Начальная цена (0-{userBalance}):", parseMode: ParseMode.Html);
                 break;
 
             case PostStep.price:
-                if (!decimal.TryParse(message.Text, out var price) || price < 0 || price > 1_000_000)
+                if (!decimal.TryParse(message.Text, out var price) || price < 0 || price > userBalance)
                 {
-                    await Client.SendMessage(chat, "Неверный формат цены, попробуйте ещё раз.");
+                    await Client.SendMessage(chat, "Неверная цена, попробуйте ещё раз.");
                     return;
                 }
 

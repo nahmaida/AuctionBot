@@ -66,13 +66,13 @@
 
             if (amount <= CurrentPrice * 1.05m)
             {
-                error = $"⚠️Минимальная новая ставка: <b>{CurrentPrice * 1.05m}₽</b>";
+                error = $"⚠️Минимальная новая ставка: {CurrentPrice * 1.05m}₽";
                 return false;
             }
 
             if (amount < bidder.Balance)
             {
-                error = $"⚠️У вас нет столько денег!</b>";
+                error = $"⚠️У вас нет столько денег!";
                 return false;
             }
 
