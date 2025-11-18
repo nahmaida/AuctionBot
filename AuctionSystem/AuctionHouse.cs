@@ -16,7 +16,9 @@
                 while (true)
                 {
                     // раз в 30 секунд проверяем истекшие аукционы
+                    Console.WriteLine("[Timer] Жду 30 секунд...");
                     await Task.Delay(TimeSpan.FromSeconds(30));
+                    Console.WriteLine("[Timer] Проверяю истёкшие аукционы");
                     await CheckExpiredAuctionsAsync();
                 }
             });

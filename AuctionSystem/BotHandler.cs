@@ -1,4 +1,5 @@
-﻿using Telegram.Bot;
+﻿using System;
+using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
@@ -23,7 +24,7 @@ public enum PostStep
 }
 
 /// <summary>
-/// Helper для временного хранения данных при создании поста
+/// Helper для временного хранения данных при создании лота
 /// </summary>
 public class PostFlow
 {
@@ -171,6 +172,10 @@ public class BotHandler
                 await HandlePost(message.Chat);
                 break;
 
+            case "Выигранные лоты":
+                await HandleViewWon(message.Chat);
+                break;
+
             default:
                 await Client.SendMessage(message.Chat, "Неверная команда!");
                 break;
@@ -232,6 +237,7 @@ public class BotHandler
             return;
         }
 
+        await Client.SendMessage(item.Creator.Id, $"⚠️Новая ставка на ваш лот <b>{item.Name}</b>\n\n@{user.Username}: {bidAmount}", parseMode: ParseMode.Html);
         await Client.SendMessage(message.Chat, "🎉Успешно!");
     }
 
@@ -266,6 +272,10 @@ public class BotHandler
                 new KeyboardButton[]
                 {
                     new KeyboardButton("Баланс"),
+                    new KeyboardButton("Выигранные лоты")
+                },
+                new KeyboardButton[]
+                {
                     new KeyboardButton("Выставить на аукцион")
                 },
                 new KeyboardButton[]
@@ -280,7 +290,7 @@ public class BotHandler
 
         await Client.SendMessage(
             chat,
-            "Добро пожаловать в Gambling Empire, аукцион номер 1 в П312💹\n\n💰Стартовый баланс: 1000₽",
+            "Добро пожаловать в Gambling Empire, аукцион номер 1 в П312💹\n\n💰Стартовый баланс: 10000₽",
             replyMarkup: replyKeyboard,
             parseMode: ParseMode.Html
         );
@@ -302,7 +312,7 @@ public class BotHandler
         {
             if (!item.IsActive) continue;
 
-            var caption = item.GetCaption();
+            string caption = item.GetCaption();
             var keyboard = new InlineKeyboardMarkup(new[]
             {
                 new []
@@ -317,6 +327,34 @@ public class BotHandler
                 caption: caption,
                 parseMode: ParseMode.Html,
                 replyMarkup: keyboard
+            );
+        }
+    }
+
+    /// <summary>
+    /// Выводим выигранные пользователем лоты
+    /// </summary>
+    /// <param name="chat">Текущий чат</param>
+    private async Task HandleViewWon(Chat chat)
+    {
+        var won = House.AuctionItems.Where(a => !a.IsActive && a.HighestBidder.Id == chat.Id && a.Creator.Id != chat.Id);
+
+        if (won.Count() == 0)
+        {
+            await Client.SendMessage(chat, "Вы пока ничего не выиграли!");
+            return;
+        }
+
+        await Client.SendMessage(chat, "✅Ваши выигрыши:");
+
+        foreach (AuctionItem item in won)
+        {
+            string caption = item.GetCaption();
+            await Client.SendPhoto(
+                chatId: chat.Id,
+                photo: InputFile.FromFileId(item.ImageId),
+                caption: caption,
+                parseMode: ParseMode.Html
             );
         }
     }
@@ -347,7 +385,10 @@ public class BotHandler
     private async Task ContinuePostFlow(Message message, PostFlow flow, PostStep step)
     {
         Chat chat = message.Chat;
-        decimal userBalance = Users.First(u => u.Id == chat.Id).Balance;
+
+        // Максимальный баланс пользователей для проверки цены
+        // (Не принимаем если никто не может поставить)
+        decimal maxUserBalance = Users.Max(u => u.Id == chat.Id ? u.Balance : 0);
 
         switch (step)
         {
@@ -400,11 +441,11 @@ public class BotHandler
                     _postSteps[chat.Id] = PostStep.price;
                 }
 
-                await Client.SendMessage(chat, $"Начальная цена (0-{userBalance}):", parseMode: ParseMode.Html);
+                await Client.SendMessage(chat, $"Начальная цена (0-{maxUserBalance}):", parseMode: ParseMode.Html);
                 break;
 
             case PostStep.price:
-                if (!decimal.TryParse(message.Text, out var price) || price < 0 || price > userBalance)
+                if (!decimal.TryParse(message.Text, out var price) || price < 0 || price > maxUserBalance)
                 {
                     await Client.SendMessage(chat, "Неверная цена, попробуйте ещё раз.");
                     return;

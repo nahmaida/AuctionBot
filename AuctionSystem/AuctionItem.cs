@@ -64,13 +64,13 @@
                 return false;
             }
 
-            if (amount <= CurrentPrice * 1.05m)
+            if (amount < CurrentPrice * 1.05m)
             {
                 error = $"⚠️Минимальная новая ставка: {CurrentPrice * 1.05m}₽";
                 return false;
             }
 
-            if (amount < bidder.Balance)
+            if (amount > bidder.Balance)
             {
                 error = $"⚠️У вас нет столько денег!";
                 return false;
@@ -125,7 +125,8 @@
                 Transaction payment = new Transaction(Creator, CurrentPrice, DateTime.Now);
                 if (!payment.TryProcess())
                 {
-                    throw new Exception("⚠️Ошибка перевода средств создателю лота!");
+                    Console.WriteLine("⚠️Ошибка перевода средств создателю лота!");
+                    return;
                 }
 
                 BidHistory.Add(payment);
