@@ -15,6 +15,10 @@
         public DateTime CreatedAt { get; set; }
         public List<Transaction> BidHistory { get; set; } = new();
         private readonly ReaderWriterLockSlim _rwl = new();
+        private readonly object _bidLock = new();
+        // Минимальное увеличение ставки на аукционе
+        // Сейчас - 5%
+        public static readonly decimal MinBidMultiplier = 1.05m;
 
         public AuctionItem(string name, string description, string imageId, decimal initialPrice, UserAccount creator, TimeSpan duration)
         {
@@ -36,11 +40,20 @@
         /// </summary>
         public string GetCaption()
         {
-            return $"<b>Имя:</b> {Name}\n\n" +
-                  $"<b>Описание:</b> {Description}\n\n" +
-                  $"💰<b>Наибольшая ставка:</b> @{HighestBidder.Username}: {CurrentPrice}₽\n" +
-                  $"👤<b>Создатель:</b> @{Creator.Username}\n" +
-                  $"⏰<b>Заканичвается:</b> {EndTime:yyyy-MM-dd HH:mm}";
+            _rwl.EnterReadLock();
+
+            try
+            {
+                return $"<b>Имя:</b> {Name}\n\n" +
+                      $"<b>Описание:</b> {Description}\n\n" +
+                      $"💰<b>Наибольшая ставка:</b> @{HighestBidder.Username}: {CurrentPrice}₽\n" +
+                      $"👤<b>Создатель:</b> @{Creator.Username}\n" +
+                      $"⏰<b>Заканичвается:</b> {EndTime:yyyy-MM-dd HH:mm}";
+            }
+            finally
+            {
+                _rwl.ExitReadLock();
+            }
         }
 
         /// <summary>
@@ -64,21 +77,20 @@
                 return false;
             }
 
-            if (amount < CurrentPrice * 1.05m)
-            {
-                error = $"⚠️Минимальная новая ставка: {CurrentPrice * 1.05m}₽";
-                return false;
-            }
-
             if (amount > bidder.Balance)
             {
                 error = $"⚠️У вас нет столько денег!";
                 return false;
             }
 
-            _rwl.EnterWriteLock();
-            try
+            lock (_bidLock) 
             {
+                if (amount < CurrentPrice * MinBidMultiplier)
+                {
+                    error = $"⚠️Минимальная новая ставка: {CurrentPrice * MinBidMultiplier}₽";
+                    return false;
+                }
+
                 if (HighestBidder != null && HighestBidder.Id != bidder.Id)
                 {
                     // Возвращаем деньги предыдущему участнику
@@ -105,10 +117,7 @@
                 HighestBidder = bidder;
                 error = string.Empty;
             }
-            finally
-            {
-                _rwl.ExitWriteLock();
-            }
+        
             return true;
         }
 
@@ -117,8 +126,7 @@
         /// </summary>
         public void EndAuction()
         {
-            _rwl.EnterWriteLock();
-            try
+            lock(_bidLock) 
             {
                 IsActive = false;
 
@@ -130,10 +138,6 @@
                 }
 
                 BidHistory.Add(payment);
-            }
-            finally
-            {
-                _rwl.ExitWriteLock();
             }
         }
     }

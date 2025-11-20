@@ -1,4 +1,6 @@
-﻿namespace AuctionSystem
+﻿using Telegram.Bot.Types;
+
+namespace AuctionSystem
 {
     public class AuctionHouse
     {
@@ -6,6 +8,7 @@
         public event Func<AuctionItem, Task>? AuctionEnded;
         private readonly Task _backgroundTimer;
         private readonly ReaderWriterLockSlim _rwl;
+        private readonly int _timerSeconds = 30;
 
         public AuctionHouse()
         {
@@ -16,8 +19,8 @@
                 while (true)
                 {
                     // раз в 30 секунд проверяем истекшие аукционы
-                    Console.WriteLine("[Timer] Жду 30 секунд...");
-                    await Task.Delay(TimeSpan.FromSeconds(30));
+                    Console.WriteLine($"[Timer] Жду {_timerSeconds} секунд...");
+                    await Task.Delay(TimeSpan.FromSeconds(_timerSeconds));
                     Console.WriteLine("[Timer] Проверяю истёкшие аукционы");
                     await CheckExpiredAuctionsAsync();
                 }
@@ -39,6 +42,37 @@
             {
                 _rwl.ExitWriteLock();
             }
+        }
+
+        /// <summary>
+        /// Получаем лоты, выигранные пользователем
+        /// </summary>
+        /// <param name="id">Id текущего чата</param>
+        /// <returns>List<AuctionItem> выигранных лотов</returns>
+        public List<AuctionItem> GetWonItems(long id)
+        {
+            _rwl.EnterReadLock();
+            try
+            {
+                // возвращаем копию
+                return AuctionItems.Where(a => !a.IsActive && a.HighestBidder.Id == id && a.Creator.Id != id).ToList();
+            }
+            finally { _rwl.ExitReadLock(); }
+        }
+
+        /// <summary>
+        /// Получаем активные лоты
+        /// </summary>
+        /// <returns>List<AuctionItem> активных лотов</returns>
+        public List<AuctionItem> GetActiveItems()
+        {
+            _rwl.EnterReadLock();
+            try
+            {
+                // возвращаем копию
+                return AuctionItems.Where(x => x.IsActive).ToList();
+            }
+            finally { _rwl.ExitReadLock(); }
         }
 
         /// <summary>

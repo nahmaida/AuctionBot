@@ -37,6 +37,7 @@ public class PostFlow
 
 /// <summary>
 /// Обработчик бота. Отвечает за прием сообщений, интерфейс бота и тд
+/// "Класс бога" но из-за приколов телеграма разделять слишком долго
 /// </summary>
 public class BotHandler
 {
@@ -197,7 +198,7 @@ public class BotHandler
             return;
         }
 
-        AuctionItem? item = House.AuctionItems.FirstOrDefault(item => item.Id == bidItemId);
+        AuctionItem? item = House.GetActiveItems().FirstOrDefault(item => item.Id == bidItemId);
         if (item == null)
         {
             await Client.SendMessage(message.Chat, "Неверный товар, повторите попытку.");
@@ -302,13 +303,15 @@ public class BotHandler
     /// </summary>
     private async Task HandleView(Chat chat)
     {
-        if (!House.AuctionItems.Any(a => a.IsActive))
+        List<AuctionItem> activeItems = House.GetActiveItems();
+
+        if (activeItems.Count() == 0)
         {
             await Client.SendMessage(chat, "Пока никаких объявлений!");
             return;
         }
 
-        foreach (AuctionItem item in House.AuctionItems)
+        foreach (AuctionItem item in activeItems)
         {
             if (!item.IsActive) continue;
 
@@ -337,7 +340,7 @@ public class BotHandler
     /// <param name="chat">Текущий чат</param>
     private async Task HandleViewWon(Chat chat)
     {
-        var won = House.AuctionItems.Where(a => !a.IsActive && a.HighestBidder.Id == chat.Id && a.Creator.Id != chat.Id);
+        var won = House.GetWonItems(chat.Id);
 
         if (won.Count() == 0)
         {
@@ -578,7 +581,7 @@ public class BotHandler
                 return;
             }
 
-            var item = House.AuctionItems.FirstOrDefault(x => x.Id == itemId);
+            var item = House.GetActiveItems().FirstOrDefault(x => x.Id == itemId);
             if (item == null)
             {
                 await Client.AnswerCallbackQuery(query.Id, "Лот не найден.");
@@ -594,19 +597,21 @@ public class BotHandler
                 _postSteps[chatId] = PostStep.bid;
             }
 
-            await Client.SendMessage(chatId, $"Введите ставку (мин.: {item.CurrentPrice * 1.05m}₽)", parseMode: ParseMode.Html);
+            await Client.SendMessage(chatId, $"Введите ставку (мин.: {item.CurrentPrice * AuctionItem.MinBidMultiplier}₽)", parseMode: ParseMode.Html);
         }
     }
 
     /// <summary>
-    /// Уведомляем победителя лота и обрабатываем перевод средств
+    /// Уведомляем победителя лота
     /// </summary>
     /// <param name="item">Завершенный лот</param>
     public async Task EndAuctionAsync(AuctionItem item)
     {
-        _rwl.EnterReadLock();
+        _rwl.EnterWriteLock();
         try
         {
+            item.EndAuction();
+
             UserAccount winner = item.HighestBidder;
             // Уведомляем создателя
             await Client.SendMessage(
@@ -627,7 +632,7 @@ public class BotHandler
         }
         finally
         {
-            _rwl.ExitReadLock();
+            _rwl.ExitWriteLock();
         }
     }
 }
