@@ -15,8 +15,6 @@ namespace AuctionSystem
 
             Console.WriteLine("Бот работает. Ctrl+C для выхода.");
             await Task.Delay(Timeout.Infinite);
-
-            house.
         }
     }
 }
