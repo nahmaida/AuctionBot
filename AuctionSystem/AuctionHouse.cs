@@ -1,11 +1,15 @@
-﻿using Telegram.Bot.Types;
-
-namespace AuctionSystem
+﻿namespace AuctionSystem
 {
+    /// <summary>
+    /// Аукцион. Отвечает за хранение, добавление, проверку, завершение лотов
+    /// </summary>
     public class AuctionHouse
     {
         public List<AuctionItem> AuctionItems { get; set; }
+
+        // делегат для обработки конца аукциона
         public event Func<AuctionItem, Task>? AuctionEnded;
+
         private readonly Task _backgroundTimer;
         private readonly ReaderWriterLockSlim _rwl;
         private readonly int _timerSeconds = 30;

@@ -1,5 +1,8 @@
 ﻿namespace AuctionSystem
 {
+    /// <summary>
+    /// Аккаунт ползователя с id, именем, балансом
+    /// </summary>
     public class UserAccount
     {
         public long Id { get; set; }

@@ -1,5 +1,4 @@
-﻿using System;
-using Telegram.Bot;
+﻿using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
@@ -41,15 +40,20 @@ public class PostFlow
 /// </summary>
 public class BotHandler
 {
-    // небезопасно, ну и ладно
-    private readonly string token = "8474493428:AAFczNluN_mNrzle4uOttUklYpgN1h39ybA";
+    // тут заменить
+    private readonly string token = "BOT_TOKEN";
+
     private readonly ReaderWriterLockSlim _rwl = new();
+
     // chatId -> PostFlow
     private readonly Dictionary<long, PostFlow> _postFlows = new();
+
     // chatId -> PostStep
     private readonly Dictionary<long, PostStep> _postSteps = new();
+
     // chatId -> auctionItemId
     private readonly Dictionary<long, Guid> _pendingBids = new();
+
     private readonly object _stateLock = new();
     private TelegramBotClient Client { get; set; }
     public List<UserAccount> Users { get; set; }
@@ -225,7 +229,7 @@ public class BotHandler
 
         bool success = item.TryPlaceBid(user, bidAmount, out string error);
 
-        // Сбрасываем состояние ставки для этого чата  
+        // Сбрасываем состояние ставки для этого чата
         lock (_stateLock)
         {
             _pendingBids.Remove(chat.Id);

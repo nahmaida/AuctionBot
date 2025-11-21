@@ -4,8 +4,9 @@ namespace AuctionSystem
 {
     internal class Program
     {
-        static async Task Main()
+        private static async Task Main()
         {
+            // Т.к по умолчанию не выводит кирилицу
             Console.OutputEncoding = Encoding.UTF8;
 
             AuctionHouse house = new();
@@ -14,6 +15,8 @@ namespace AuctionSystem
 
             Console.WriteLine("Бот работает. Ctrl+C для выхода.");
             await Task.Delay(Timeout.Infinite);
+
+            house.
         }
     }
 }

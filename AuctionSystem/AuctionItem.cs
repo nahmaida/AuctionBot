@@ -8,7 +8,7 @@
         public string ImageId { get; set; }
         public decimal InitialPrice { get; set; }
         public decimal CurrentPrice { get; set; }
-        public UserAccount Creator {  get; set; }
+        public UserAccount Creator { get; set; }
         public UserAccount HighestBidder { get; set; }
         public DateTime EndTime { get; set; }
         public bool IsActive { get; set; }
@@ -16,6 +16,7 @@
         public List<Transaction> BidHistory { get; set; } = new();
         private readonly ReaderWriterLockSlim _rwl = new();
         private readonly object _bidLock = new();
+
         // Минимальное увеличение ставки на аукционе
         // Сейчас - 5%
         public static readonly decimal MinBidMultiplier = 1.05m;
@@ -83,7 +84,8 @@
                 return false;
             }
 
-            lock (_bidLock) 
+            // используем lock, т.к. rwl слишком медленный когда много людей хотят поставить одновременно
+            lock (_bidLock)
             {
                 if (amount < CurrentPrice * MinBidMultiplier)
                 {
@@ -117,7 +119,7 @@
                 HighestBidder = bidder;
                 error = string.Empty;
             }
-        
+
             return true;
         }
 
@@ -126,7 +128,7 @@
         /// </summary>
         public void EndAuction()
         {
-            lock(_bidLock) 
+            lock (_bidLock)
             {
                 IsActive = false;
 
@@ -138,6 +140,9 @@
                 }
 
                 BidHistory.Add(payment);
+
+                Console.WriteLine($"Завершен аукцион по лоту \"{Name}\"");
+                Console.WriteLine($"Победитель: @{HighestBidder}, цена: {CurrentPrice}");
             }
         }
     }

@@ -1,5 +1,8 @@
 ﻿namespace AuctionSystem
 {
+    /// <summary>
+    /// Транзакция с получателем, суммой, временем. Отвечает за перевод денег
+    /// </summary>
     public class Transaction
     {
         public UserAccount User { get; set; }
@@ -15,7 +18,9 @@
 
         public bool TryProcess()
         {
-            if (User.Balance < Amount)
+            // Если мы пытаемся СПИСАТЬ деньги (Amount отрицательный),
+            // проверяем, чтобы баланс не стал меньше нуля
+            if (Amount < 0 && (User.Balance + Amount < 0))
             {
                 return false;
             }
