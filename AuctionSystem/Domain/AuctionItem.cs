@@ -1,4 +1,4 @@
-﻿namespace AuctionSystem
+﻿namespace AuctionSystem.Domain
 {
     public class AuctionItem
     {

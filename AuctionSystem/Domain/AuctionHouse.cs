@@ -1,4 +1,4 @@
-﻿namespace AuctionSystem
+﻿namespace AuctionSystem.Domain
 {
     /// <summary>
     /// Аукцион. Отвечает за хранение, добавление, проверку, завершение лотов

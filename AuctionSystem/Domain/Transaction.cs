@@ -1,4 +1,4 @@
-﻿namespace AuctionSystem
+﻿namespace AuctionSystem.Domain
 {
     /// <summary>
     /// Транзакция с получателем, суммой, временем. Отвечает за перевод денег

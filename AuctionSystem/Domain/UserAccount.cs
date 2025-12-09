@@ -1,4 +1,4 @@
-﻿namespace AuctionSystem
+﻿namespace AuctionSystem.Domain
 {
     /// <summary>
     /// Аккаунт ползователя с id, именем, балансом
