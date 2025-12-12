@@ -15,7 +15,7 @@ namespace AuctionSystem.Main
             // Т.к по умолчанию не выводит кирилицу
             Console.OutputEncoding = Encoding.UTF8;
 
-            const string token = "8474493428:AAFczNluN_mNrzle4uOttUklYpgN1h39ybA";
+            const string token = "YOUR_TOKEN_HERE";
             TelegramBotClient client = new TelegramBotClient(token);
 
             AuctionHouse house = new();
