@@ -15,7 +15,13 @@ namespace AuctionSystem.Main
             // Т.к по умолчанию не выводит кирилицу
             Console.OutputEncoding = Encoding.UTF8;
 
-            const string token = "YOUR_TOKEN_HERE";
+            string? token = Environment.GetEnvironmentVariable("TELEGRAM_TOKEN");
+            if (string.IsNullOrEmpty(token))
+            {
+                Console.WriteLine("Ошибка: TELEGRAM_TOKEN не установлен!");
+                return;
+            }
+
             TelegramBotClient client = new TelegramBotClient(token);
 
             AuctionHouse house = new();
