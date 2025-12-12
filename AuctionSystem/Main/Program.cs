@@ -1,6 +1,7 @@
 ﻿using AuctionSystem.Application;
 using AuctionSystem.Domain;
 using AuctionSystem.Infrastructure.Telegram;
+using AuctionSystem.Infrastructure.Telegram.Commands;
 using AuctionSystem.Models;
 using System.Text;
 using Telegram.Bot;
@@ -14,7 +15,7 @@ namespace AuctionSystem.Main
             // Т.к по умолчанию не выводит кирилицу
             Console.OutputEncoding = Encoding.UTF8;
 
-            const string token = "YOUR_TOKEN_HERE";
+            const string token = "8474493428:AAFczNluN_mNrzle4uOttUklYpgN1h39ybA";
             TelegramBotClient client = new TelegramBotClient(token);
 
             AuctionHouse house = new();
@@ -24,7 +25,15 @@ namespace AuctionSystem.Main
             IUserService userService = new TelegramUserService();
             IConversationStateStore state = new InMemoryConversationStateStore();
 
-            TelegramUpdateRouter router = new(sender, auctionService, userService, state);
+            PostCommand post = new(state, sender);
+            StartCommand start = new(userService, sender);
+            ViewCommand view = new(auctionService, sender);
+            ViewBalanceCommand viewBalance = new(userService, sender);
+            ViewWonCommand viewWon = new(auctionService, sender);
+
+            IEnumerable<ITelegramCommand> commands = new List<ITelegramCommand> { post, start, view, viewBalance, viewWon };
+
+            TelegramUpdateRouter router = new(commands, sender, auctionService, userService, state);
             TelegramBotHost host = new(client, router);
 
             host.Start();

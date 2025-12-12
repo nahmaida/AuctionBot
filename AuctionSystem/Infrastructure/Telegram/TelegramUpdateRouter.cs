@@ -1,5 +1,6 @@
 ﻿using AuctionSystem.Application;
 using AuctionSystem.Domain;
+using AuctionSystem.Infrastructure.Telegram.Commands;
 using AuctionSystem.Models;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.ReplyMarkups;
@@ -8,17 +9,20 @@ namespace AuctionSystem.Infrastructure.Telegram
 {
     public class TelegramUpdateRouter
     {
+        private readonly IEnumerable<ITelegramCommand> _commands;
         private readonly IAuctionService auctionService;
         private readonly IUserService userService;
         private readonly IConversationStateStore state;
         private readonly IMessageSender sender;
 
         public TelegramUpdateRouter(
+            IEnumerable<ITelegramCommand> commands,
             IMessageSender sender,
             IAuctionService auctionService,
             IUserService userService,
             IConversationStateStore state)
         {
+            _commands = commands;
             this.sender = sender;
             this.auctionService = auctionService;
             this.userService = userService;
@@ -154,44 +158,14 @@ namespace AuctionSystem.Infrastructure.Telegram
             }
 
             // читаем команды
-            switch (message.Text)
+            var command = _commands.FirstOrDefault(c => c.Name == message.Text);
+            if (command != null)
             {
-                case "/start":
-                    await HandleStart(message.Chat);
-                    break;
-
-                case "Баланс":
-                    await HandleViewBalance(chatId);
-                    break;
-
-                case "Просмотреть лоты":
-                    await HandleView(message.Chat);
-                    break;
-
-                case "Выставить на аукцион":
-                    await HandlePost(message.Chat);
-                    break;
-
-                case "Выигранные лоты":
-                    await HandleViewWon(message.Chat);
-                    break;
-
-                default:
-                    await sender.SendMessage(chatId, "Неверная команда!");
-                    break;
-            }
-        }
-
-        private async Task HandleViewBalance(long chatId)
-        {
-            if (!userService.TryGetUser(chatId, out UserAccount? user))
-            {
-                await sender.SendMessage(chatId, "Сначала зарегистрируйтесь! (/start)");
+                await command.ExecuteAsync(message);
                 return;
             }
 
-            decimal balance = user.Balance;
-            await sender.SendMessage(chatId, $"💰Баланс: {balance}₽");
+            await sender.SendMessage(chatId, "Неверная команда!");
         }
 
         /// <summary>
@@ -248,137 +222,6 @@ namespace AuctionSystem.Infrastructure.Telegram
                 $"⚠️Новая ставка на ваш лот {item.Name}\n\n@{user.Username}: {bidAmount}"
             );
             await sender.SendMessage(chatId, "🎉Успешно!");
-        }
-
-        /// <summary>
-        /// Регистрация пользователя и вывод стартового меню
-        /// </summary>
-        /// <param name="chat">Текущий чат</param>
-        private async Task HandleStart(Chat chat)
-        {
-            long chatId = chat.Id;
-
-            if (userService.TryGetUser(chatId, out var _))
-            {
-                await sender.SendMessage(chatId, "Вы уже зарегистрированы!");
-                return;
-            }
-
-            UserAccount user = new UserAccount(chatId, chat.Username ?? "Аноним");
-            userService.AddUser(user);
-
-            // Приветствие с меню
-            var replyKeyboard = new ReplyKeyboardMarkup(
-                new[]
-                {
-                    new KeyboardButton[]
-                    {
-                        new KeyboardButton("Баланс"),
-                        new KeyboardButton("Выигранные лоты")
-                    },
-                    new KeyboardButton[]
-                    {
-                        new KeyboardButton("Выставить на аукцион")
-                    },
-                    new KeyboardButton[]
-                    {
-                        new KeyboardButton("Просмотреть лоты")
-                    }
-                }
-            )
-            {
-                ResizeKeyboard = true
-            };
-
-            await sender.SendMessage(
-                chatId,
-                "Добро пожаловать в Gambling Empire, аукцион номер 1 в П312💹\n\n💰Стартовый баланс: 10000₽",
-                replyMarkup: replyKeyboard
-            );
-        }
-
-        /// <summary>
-        /// Вывод активных лотов и кнопки для ставки
-        /// Текущий чат
-        /// </summary>
-        private async Task HandleView(Chat chat)
-        {
-            long chatId = chat.Id;
-
-            List<AuctionItem> activeItems = auctionService.GetActiveItems();
-            if (activeItems.Count == 0)
-            {
-                await sender.SendMessage(chatId, "Пока никаких объявлений!");
-                return;
-            }
-
-            foreach (AuctionItem item in activeItems)
-            {
-                if (!item.IsActive) continue;
-
-                string caption = item.GetCaption();
-                var keyboard = new InlineKeyboardMarkup(
-                    new[]
-                    {
-                        new[]
-                        {
-                            InlineKeyboardButton.WithCallbackData(
-                                "✅Сделать ставку",
-                                $"make_bid:{item.Id}"
-                            )
-                        }
-                    }
-                );
-
-                await sender.SendPhoto(
-                    chatId: chatId,
-                    photo: InputFile.FromFileId(item.ImageId),
-                    caption: caption,
-                    replyMarkup: keyboard
-                );
-            }
-        }
-
-        /// <summary>
-        /// Выводим выигранные пользователем лоты
-        /// </summary>
-        /// <param name="chat">Текущий чат</param>
-        private async Task HandleViewWon(Chat chat)
-        {
-            long chatId = chat.Id;
-
-            var won = auctionService.GetWonItems(chatId);
-            if (won.Count == 0)
-            {
-                await sender.SendMessage(chatId, "Вы пока ничего не выиграли!");
-                return;
-            }
-
-            await sender.SendMessage(chatId, "✅Ваши выигрыши:");
-            foreach (AuctionItem item in won)
-            {
-                string caption = item.GetCaption();
-                await sender.SendPhoto(
-                    chatId: chatId,
-                    photo: InputFile.FromFileId(item.ImageId),
-                    caption: caption
-                );
-            }
-        }
-
-        /// <summary>
-        /// Создания лота
-        /// Создаём PostFlow и переводим шаг в name только для данного chat.Id.
-        /// </summary>
-        /// <param name="chat">Текущий чат</param>
-        private async Task HandlePost(Chat chat)
-        {
-            long chatId = chat.Id;
-
-            state.SetFlow(chatId, new PostFlow());
-            state.SetStep(chatId, PostStep.name);
-
-            await sender.SendMessage(chatId, "Введите название:");
         }
 
         /// <summary>

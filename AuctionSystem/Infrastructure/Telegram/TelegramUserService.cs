@@ -1,7 +1,5 @@
 ﻿using AuctionSystem.Domain;
 using AuctionSystem.Models;
-using System.Reflection;
-using Telegram.Bot.Types;
 
 namespace AuctionSystem.Infrastructure.Telegram
 {
