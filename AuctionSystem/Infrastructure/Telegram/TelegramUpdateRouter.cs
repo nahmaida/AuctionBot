@@ -6,15 +6,18 @@ using Telegram.Bot.Types.ReplyMarkups;
 
 namespace AuctionSystem.Infrastructure.Telegram
 {
-    internal class TelegramUpdateRouter
+    public class TelegramUpdateRouter
     {
-        private readonly object _stateLock = new();
         private readonly IAuctionService auctionService;
         private readonly IUserService userService;
         private readonly IConversationStateStore state;
         private readonly IMessageSender sender;
 
-        public TelegramUpdateRouter(IMessageSender sender, IAuctionService auctionService, IUserService userService, IConversationStateStore state)
+        public TelegramUpdateRouter(
+            IMessageSender sender,
+            IAuctionService auctionService,
+            IUserService userService,
+            IConversationStateStore state)
         {
             this.sender = sender;
             this.auctionService = auctionService;
@@ -38,9 +41,8 @@ namespace AuctionSystem.Infrastructure.Telegram
 
         /// <summary>
         /// Обработка нажатий кнопок ТОЛЬКО для текущего chatId.
+        /// Запрос от пользователи (нажатая кнопка)
         /// </summary>
-        /// <param name="query">Запрос от пользователи (нажатая кнопка)</param>
-        /// <returns></returns>
         private async Task OnCallback(CallbackQuery query)
         {
             var chatId = query.Message!.Chat.Id;
@@ -49,11 +51,7 @@ namespace AuctionSystem.Infrastructure.Telegram
 
             if (data == "post_accept" || data == "post_discard")
             {
-                PostFlow? flow;
-                lock (_stateLock)
-                {
-                    flow = state.GetFlow(chatId);
-                }
+                var flow = state.GetFlow(chatId);
 
                 if (flow == null)
                 {
@@ -63,11 +61,8 @@ namespace AuctionSystem.Infrastructure.Telegram
 
                 if (data == "post_discard")
                 {
-                    lock (_stateLock)
-                    {
-                        state.ClearFlow(chatId);
-                        state.SetStep(chatId, PostStep.none);
-                    }
+                    state.ClearFlow(chatId);
+                    state.SetStep(chatId, PostStep.none);
 
                     await sender.AnswerCallbackQuery(query.Id, "Лот отменён.");
                     await sender.SendMessage(chatId, "Создание лота отменено.");
@@ -88,11 +83,8 @@ namespace AuctionSystem.Infrastructure.Telegram
 
                 auctionService.AddItem(item);
 
-                lock (_stateLock)
-                {
-                    state.ClearFlow(chatId);
-                    state.SetStep(chatId, PostStep.none);
-                }
+                state.ClearFlow(chatId);
+                state.SetStep(chatId, PostStep.none);
 
                 await sender.AnswerCallbackQuery(query.Id, "Лот создан!");
                 await sender.SendMessage(chatId, "Лот успешно создан и добавлен в аукцион.");
@@ -109,8 +101,7 @@ namespace AuctionSystem.Infrastructure.Telegram
                     return;
                 }
 
-                AuctionItem? item;
-                if (!auctionService.TryGetItem(itemId, out item))
+                if (!auctionService.TryGetItem(itemId, out AuctionItem? item))
                 {
                     await sender.AnswerCallbackQuery(query.Id, "Лот не найден.");
                     return;
@@ -119,13 +110,13 @@ namespace AuctionSystem.Infrastructure.Telegram
                 // Переводим в режим ввода суммы ставки
                 await sender.AnswerCallbackQuery(query.Id, "Вы выбрали лот для ставки.");
 
-                lock (_stateLock)
-                {
-                    state.SetPendingBid(chatId, itemId);
-                    state.SetStep(chatId, PostStep.bid);
-                }
+                state.SetPendingBid(chatId, itemId);
+                state.SetStep(chatId, PostStep.bid);
 
-                await sender.SendMessage(chatId, $"Введите ставку (мин.: {item.CurrentPrice * AuctionItem.MinBidMultiplier}₽)");
+                await sender.SendMessage(
+                    chatId,
+                    $"Введите ставку (мин.: {item.CurrentPrice * AuctionItem.MinBidMultiplier}₽)"
+                );
             }
         }
 
@@ -134,7 +125,6 @@ namespace AuctionSystem.Infrastructure.Telegram
         /// ВАЖНО: все состояние проверяется ТОЛЬКО для текущего чата
         /// </summary>
         /// <param name="update">Обновление от бота</param>
-        /// <returns></returns>
         private async Task OnMessage(Update update)
         {
             var message = update.Message;
@@ -143,18 +133,11 @@ namespace AuctionSystem.Infrastructure.Telegram
             Chat chat = message.Chat;
             long chatId = chat.Id;
 
-            // Получаем состояние чата
-            PostFlow? flow = null;
-            PostStep stepForChat = PostStep.none;
-            Guid bidItemId = Guid.Empty;
-            bool hasBid = false;
-
-            lock (_stateLock)
-            {
-                flow = state.GetFlow(chatId);
-                stepForChat = state.GetStep(chatId);
-                hasBid = state.TryGetPendingBid(chatId, out bidItemId);
-            }
+            // Получаем состояние чата (каждый вызов сам по себе потокобезопасен)
+            PostFlow? flow = state.GetFlow(chatId);
+            PostStep stepForChat = state.GetStep(chatId);
+            Guid bidItemId;
+            bool hasBid = state.TryGetPendingBid(chatId, out bidItemId);
 
             // Проверяем, создаем ли мы лот
             if (stepForChat != PostStep.none && stepForChat != PostStep.bid && flow != null)
@@ -201,8 +184,7 @@ namespace AuctionSystem.Infrastructure.Telegram
 
         private async Task HandleViewBalance(long chatId)
         {
-            UserAccount? user;
-            if (!userService.TryGetUser(chatId, out user))
+            if (!userService.TryGetUser(chatId, out UserAccount? user))
             {
                 await sender.SendMessage(chatId, "Сначала зарегистрируйтесь! (/start)");
                 return;
@@ -228,39 +210,32 @@ namespace AuctionSystem.Infrastructure.Telegram
                 return;
             }
 
-            AuctionItem? item;
-            if (!auctionService.TryGetItem(bidItemId, out item))
+            if (!auctionService.TryGetItem(bidItemId, out AuctionItem? item))
             {
                 await sender.SendMessage(chatId, "Неверный товар, повторите попытку.");
+
                 // Сбрасываем режим ставки только для этого чата
-                lock (_stateLock)
-                {
-                    state.ClearPendingBid(chatId);
-                    state.SetStep(chatId, PostStep.none);
-                }
+                state.ClearPendingBid(chatId);
+                state.SetStep(chatId, PostStep.none);
+
                 return;
             }
 
-            UserAccount? user;
-            if (!userService.TryGetUser(chatId, out user))
+            if (!userService.TryGetUser(chatId, out UserAccount? user))
             {
                 await sender.SendMessage(chatId, "Сначала зарегистрируйтесь! (/start)");
-                lock (_stateLock)
-                {
-                    state.ClearPendingBid(chatId);
-                    state.SetStep(chatId, PostStep.none);
-                }
+
+                state.ClearPendingBid(chatId);
+                state.SetStep(chatId, PostStep.none);
+
                 return;
             }
 
             bool success = item.TryPlaceBid(user, bidAmount, out string error);
 
             // Сбрасываем состояние ставки для этого чата
-            lock (_stateLock)
-            {
-                state.ClearPendingBid(chatId);
-                state.SetStep(chatId, PostStep.none);
-            }
+            state.ClearPendingBid(chatId);
+            state.SetStep(chatId, PostStep.none);
 
             if (!success)
             {
@@ -268,7 +243,10 @@ namespace AuctionSystem.Infrastructure.Telegram
                 return;
             }
 
-            await sender.SendMessage(item.Creator.Id, $"⚠️Новая ставка на ваш лот <b>{item.Name}</b>\n\n@{user.Username}: {bidAmount}");
+            await sender.SendMessage(
+                item.Creator.Id,
+                $"⚠️Новая ставка на ваш лот {item.Name}\n\n@{user.Username}: {bidAmount}"
+            );
             await sender.SendMessage(chatId, "🎉Успешно!");
         }
 
@@ -287,26 +265,25 @@ namespace AuctionSystem.Infrastructure.Telegram
             }
 
             UserAccount user = new UserAccount(chatId, chat.Username ?? "Аноним");
-
             userService.AddUser(user);
 
             // Приветствие с меню
             var replyKeyboard = new ReplyKeyboardMarkup(
                 new[]
                 {
-                new KeyboardButton[]
-                {
-                    new KeyboardButton("Баланс"),
-                    new KeyboardButton("Выигранные лоты")
-                },
-                new KeyboardButton[]
-                {
-                    new KeyboardButton("Выставить на аукцион")
-                },
-                new KeyboardButton[]
-                {
-                    new KeyboardButton("Просмотреть лоты")
-                }
+                    new KeyboardButton[]
+                    {
+                        new KeyboardButton("Баланс"),
+                        new KeyboardButton("Выигранные лоты")
+                    },
+                    new KeyboardButton[]
+                    {
+                        new KeyboardButton("Выставить на аукцион")
+                    },
+                    new KeyboardButton[]
+                    {
+                        new KeyboardButton("Просмотреть лоты")
+                    }
                 }
             )
             {
@@ -322,13 +299,13 @@ namespace AuctionSystem.Infrastructure.Telegram
 
         /// <summary>
         /// Вывод активных лотов и кнопки для ставки
-        /// <param name="chat">Текущий чат</param>
+        /// Текущий чат
         /// </summary>
         private async Task HandleView(Chat chat)
         {
             long chatId = chat.Id;
-            List<AuctionItem> activeItems = auctionService.GetActiveItems();
 
+            List<AuctionItem> activeItems = auctionService.GetActiveItems();
             if (activeItems.Count == 0)
             {
                 await sender.SendMessage(chatId, "Пока никаких объявлений!");
@@ -340,13 +317,18 @@ namespace AuctionSystem.Infrastructure.Telegram
                 if (!item.IsActive) continue;
 
                 string caption = item.GetCaption();
-                var keyboard = new InlineKeyboardMarkup(new[]
-                {
-                new []
-                {
-                    InlineKeyboardButton.WithCallbackData("✅Сделать ставку", $"make_bid:{item.Id}")
-                }
-            });
+                var keyboard = new InlineKeyboardMarkup(
+                    new[]
+                    {
+                        new[]
+                        {
+                            InlineKeyboardButton.WithCallbackData(
+                                "✅Сделать ставку",
+                                $"make_bid:{item.Id}"
+                            )
+                        }
+                    }
+                );
 
                 await sender.SendPhoto(
                     chatId: chatId,
@@ -364,8 +346,8 @@ namespace AuctionSystem.Infrastructure.Telegram
         private async Task HandleViewWon(Chat chat)
         {
             long chatId = chat.Id;
-            var won = auctionService.GetWonItems(chatId);
 
+            var won = auctionService.GetWonItems(chatId);
             if (won.Count == 0)
             {
                 await sender.SendMessage(chatId, "Вы пока ничего не выиграли!");
@@ -373,7 +355,6 @@ namespace AuctionSystem.Infrastructure.Telegram
             }
 
             await sender.SendMessage(chatId, "✅Ваши выигрыши:");
-
             foreach (AuctionItem item in won)
             {
                 string caption = item.GetCaption();
@@ -388,16 +369,14 @@ namespace AuctionSystem.Infrastructure.Telegram
         /// <summary>
         /// Создания лота
         /// Создаём PostFlow и переводим шаг в name только для данного chat.Id.
-        /// <param name="chat">Текущий чат</param>
         /// </summary>
+        /// <param name="chat">Текущий чат</param>
         private async Task HandlePost(Chat chat)
         {
             long chatId = chat.Id;
-            lock (_stateLock)
-            {
-                state.SetFlow(chatId, new PostFlow());
-                state.SetStep(chatId, PostStep.name);
-            }
+
+            state.SetFlow(chatId, new PostFlow());
+            state.SetStep(chatId, PostStep.name);
 
             await sender.SendMessage(chatId, "Введите название:");
         }
@@ -408,7 +387,6 @@ namespace AuctionSystem.Infrastructure.Telegram
         /// <param name="message">Сообщение с данными</param>
         /// <param name="flow">Хранилище данных</param>
         /// <param name="step">Текущий шаг</param>
-        /// <returns></returns>
         private async Task ContinuePostFlow(Message message, PostFlow flow, PostStep step)
         {
             Chat chat = message.Chat;
@@ -428,11 +406,7 @@ namespace AuctionSystem.Infrastructure.Telegram
                     }
 
                     flow.Name = message.Text;
-
-                    lock (_stateLock)
-                    {
-                        state.SetStep(chatId, PostStep.desc);
-                    }
+                    state.SetStep(chatId, PostStep.desc);
 
                     await sender.SendMessage(chatId, "Введите описание:");
                     break;
@@ -445,11 +419,7 @@ namespace AuctionSystem.Infrastructure.Telegram
                     }
 
                     flow.Description = message.Text;
-
-                    lock (_stateLock)
-                    {
-                        state.SetStep(chatId, PostStep.img);
-                    }
+                    state.SetStep(chatId, PostStep.img);
 
                     await sender.SendMessage(chatId, "Отправьте фото:");
                     break;
@@ -463,34 +433,30 @@ namespace AuctionSystem.Infrastructure.Telegram
 
                     // Берем самое большое фото
                     flow.ImageId = message.Photo[^1].FileId;
-
-                    lock (_stateLock)
-                    {
-                        state.SetStep(chatId, PostStep.price);
-                    }
+                    state.SetStep(chatId, PostStep.price);
 
                     await sender.SendMessage(chatId, $"Начальная цена (0-{maxUserBalance}):");
                     break;
 
                 case PostStep.price:
-                    if (!decimal.TryParse(message.Text, out var price) || price < 0 || price > maxUserBalance)
+                    if (!decimal.TryParse(message.Text, out var price) ||
+                        price < 0 ||
+                        price > maxUserBalance)
                     {
                         await sender.SendMessage(chatId, "Неверная цена, попробуйте ещё раз.");
                         return;
                     }
 
                     flow.Price = price;
-
-                    lock (_stateLock)
-                    {
-                        state.SetStep(chatId, PostStep.duration);
-                    }
+                    state.SetStep(chatId, PostStep.duration);
 
                     await sender.SendMessage(chatId, "Длительность в минутах (1-1440):");
                     break;
 
                 case PostStep.duration:
-                    if (!double.TryParse(message.Text, out var duration) || duration < 1 || duration > 1440)
+                    if (!double.TryParse(message.Text, out var duration) ||
+                        duration < 1 ||
+                        duration > 1440)
                     {
                         await sender.SendMessage(chatId, "Неверное время, попробуйте ещё раз.");
                         return;
@@ -498,19 +464,22 @@ namespace AuctionSystem.Infrastructure.Telegram
 
                     flow.Duration = duration;
 
-                    string caption = $"Имя: {flow.Name}\n\n" +
-                                     $"Описание: {flow.Description}\n\n" +
-                                     $"💰 Наибольшая ставка: (Вы): {flow.Price}₽\n" +
-                                     $"👤 Создатель: (Вы)\n";
+                    string caption =
+                        $"Имя: {flow.Name}\n\n" +
+                        $"Описание: {flow.Description}\n\n" +
+                        $"💰 Наибольшая ставка: (Вы): {flow.Price}₽\n" +
+                        $"👤 Создатель: (Вы)\n";
 
-                    var keyboard = new InlineKeyboardMarkup(new[]
-                    {
-                    new[]
-                    {
-                        InlineKeyboardButton.WithCallbackData("✅ Принять", "post_accept"),
-                        InlineKeyboardButton.WithCallbackData("🗑 Отменить", "post_discard")
-                    }
-                });
+                    var keyboard = new InlineKeyboardMarkup(
+                        new[]
+                        {
+                            new[]
+                            {
+                                InlineKeyboardButton.WithCallbackData("✅ Принять", "post_accept"),
+                                InlineKeyboardButton.WithCallbackData("🗑 Отменить", "post_discard")
+                            }
+                        }
+                    );
 
                     await sender.SendPhoto(
                         chatId: chatId,
@@ -519,18 +488,16 @@ namespace AuctionSystem.Infrastructure.Telegram
                         replyMarkup: keyboard
                     );
 
-                    lock (_stateLock)
-                    {
-                        state.SetStep(chatId, PostStep.confirm);
-                    }
-
+                    state.SetStep(chatId, PostStep.confirm);
                     break;
 
                 case PostStep.confirm:
-                    await sender.SendMessage(chatId, "Нажмите кнопку 'Принять' или 'Отменить' под предпросмотром.");
+                    await sender.SendMessage(
+                        chatId,
+                        "Нажмите кнопку 'Принять' или 'Отменить' под предпросмотром."
+                    );
                     break;
             }
         }
-
     }
 }

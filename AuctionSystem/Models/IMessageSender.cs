@@ -3,7 +3,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 
 namespace AuctionSystem.Models
 {
-    internal interface IMessageSender
+    public interface IMessageSender
     {
         Task AnswerCallbackQuery(string queryId, string message);
         Task SendMessage(long chatId, string message, ReplyMarkup? replyMarkup = null);

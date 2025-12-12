@@ -3,7 +3,7 @@ using AuctionSystem.Models;
 
 namespace AuctionSystem.Infrastructure.Telegram
 {
-    internal class TelegramAuctionService: IAuctionService
+    public class TelegramAuctionService: IAuctionService
     {
         private readonly AuctionHouse House;
         private readonly IMessageSender sender;

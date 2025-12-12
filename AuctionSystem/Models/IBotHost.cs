@@ -1,6 +1,6 @@
 ﻿namespace AuctionSystem.Models
 {
-    internal interface IBotHost
+    public interface IBotHost
     {
         void Start();
     }

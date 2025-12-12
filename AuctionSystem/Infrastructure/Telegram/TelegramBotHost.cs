@@ -7,7 +7,7 @@ using Telegram.Bot.Types.Enums;
 
 namespace AuctionSystem.Infrastructure.Telegram
 {
-    internal class TelegramBotHost : IBotHost
+    public class TelegramBotHost : IBotHost
     {
         private TelegramBotClient Client { get; set; }
         private TelegramUpdateRouter UpdateRouter { get; set; }

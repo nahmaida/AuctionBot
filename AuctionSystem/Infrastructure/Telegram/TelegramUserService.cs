@@ -5,7 +5,7 @@ using Telegram.Bot.Types;
 
 namespace AuctionSystem.Infrastructure.Telegram
 {
-    internal class TelegramUserService : IUserService
+    public class TelegramUserService : IUserService
     {
         private List<UserAccount> Users { get; set; }
         private readonly object _lock = new();

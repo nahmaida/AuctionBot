@@ -6,7 +6,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 
 namespace AuctionSystem.Infrastructure.Telegram
 {
-    internal class TelegramMessageSender : IMessageSender
+    public class TelegramMessageSender : IMessageSender
     {
         private TelegramBotClient Client { get; set; }
 

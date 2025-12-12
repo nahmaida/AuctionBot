@@ -2,7 +2,7 @@
 
 namespace AuctionSystem.Models
 {
-    internal interface IAuctionService
+    public interface IAuctionService
     {
         bool TryGetItem(Guid itemId, out AuctionItem? auctionItem);
         List<AuctionItem> GetActiveItems();

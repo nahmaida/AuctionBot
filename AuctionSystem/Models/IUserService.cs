@@ -2,7 +2,7 @@
 
 namespace AuctionSystem.Models
 {
-    internal interface IUserService
+    public interface IUserService
     {
         void AddUser(UserAccount user);
         decimal GetMaxBidAmount(long chatId);

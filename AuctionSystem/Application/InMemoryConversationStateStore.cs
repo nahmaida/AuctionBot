@@ -4,57 +4,100 @@ namespace AuctionSystem.Application
 {
     public class InMemoryConversationStateStore : IConversationStateStore
     {
-        private readonly Dictionary<long, PostFlow> _postFlows = new();
-        private readonly Dictionary<long, PostStep> _postSteps = new();
-        private readonly Dictionary<long, Guid> _pendingBids = new();
+        private readonly Dictionary<long, ConversationState> _state = new();
         private readonly object _lock = new();
+
+        private ConversationState GetOrCreate(long chatId)
+        {
+            if (!_state.TryGetValue(chatId, out var conv))
+            {
+                conv = new ConversationState();
+                _state[chatId] = conv;
+            }
+
+            return conv;
+        }
 
         public PostStep GetStep(long chatId)
         {
             lock (_lock)
-                return _postSteps.TryGetValue(chatId, out var step) ? step : PostStep.none;
+            {
+                return _state.TryGetValue(chatId, out var conv) ? conv.Step : PostStep.none;
+            }
         }
 
         public void SetStep(long chatId, PostStep step)
         {
             lock (_lock)
-                _postSteps[chatId] = step;
+            {
+                var conv = GetOrCreate(chatId);
+                conv.Step = step;
+            }
         }
 
         public PostFlow? GetFlow(long chatId)
         {
             lock (_lock)
-                return _postFlows.TryGetValue(chatId, out var flow) ? flow : null;
+            {
+                return _state.TryGetValue(chatId, out var conv) ? conv.Flow : null;
+            }
         }
 
         public void SetFlow(long chatId, PostFlow flow)
         {
             lock (_lock)
-                _postFlows[chatId] = flow;
+            {
+                var conv = GetOrCreate(chatId);
+                conv.Flow = flow;
+            }
         }
 
         public void ClearFlow(long chatId)
         {
             lock (_lock)
-                _postFlows.Remove(chatId);
+            {
+                if (_state.TryGetValue(chatId, out var conv))
+                {
+                    conv.Flow = new PostFlow();
+                    conv.Step = PostStep.none;
+                }
+            }
         }
 
         public bool TryGetPendingBid(long chatId, out Guid itemId)
         {
             lock (_lock)
-                return _pendingBids.TryGetValue(chatId, out itemId);
+            {
+                if (_state.TryGetValue(chatId, out var conv) &&
+                    conv.PendingBidItemId.HasValue)
+                {
+                    itemId = conv.PendingBidItemId.Value;
+                    return true;
+                }
+
+                itemId = Guid.Empty;
+                return false;
+            }
         }
 
         public void SetPendingBid(long chatId, Guid itemId)
         {
             lock (_lock)
-                _pendingBids[chatId] = itemId;
+            {
+                var conv = GetOrCreate(chatId);
+                conv.PendingBidItemId = itemId;
+            }
         }
 
         public void ClearPendingBid(long chatId)
         {
             lock (_lock)
-                _pendingBids.Remove(chatId);
+            {
+                if (_state.TryGetValue(chatId, out var conv))
+                {
+                    conv.PendingBidItemId = null;
+                }
+            }
         }
     }
 }
